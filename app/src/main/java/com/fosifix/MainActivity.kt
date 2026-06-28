@@ -210,41 +210,60 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val success = trySendPayload(device)
-        connectFlowRunning = false
-
-        if (success) {
-            payloadSentForCurrentConnection = true
-            appendLog("Payload sent successfully")
-            setStatus(Status.ACTIVE)
-        } else {
-            appendLog("No endpoint accepted payload")
-            setStatus(Status.WAITING)
-        }
+        Thread {
+            val success = trySendPayload(device)
+            mainHandler.post {
+                connectFlowRunning = false
+                if (success) {
+                    payloadSentForCurrentConnection = true
+                    appendLog("Payload sent successfully")
+                    setStatus(Status.ACTIVE)
+                } else {
+                    appendLog("No endpoint accepted payload")
+                    setStatus(Status.WAITING)
+                }
+            }
+        }.start()
     }
 
     private fun trySendPayload(device: UsbDevice): Boolean {
         val connection = usbManager.openDevice(device) ?: return false
-        val payload = buildPayload()
-        var anySuccess = false
+        val payloads = buildPayloads()
+        val claimedInterfaces = mutableListOf<UsbInterface>()
 
         try {
             for (interfaceIndex in 0 until device.interfaceCount) {
                 val usbInterface = device.getInterface(interfaceIndex)
                 if (usbInterface.interfaceClass != UsbConstants.USB_CLASS_HID) continue
-                if (!connection.claimInterface(usbInterface, true)) continue
-
-                try {
-                    anySuccess = anySuccess || writeToInterface(connection, usbInterface, payload)
-                } finally {
-                    connection.releaseInterface(usbInterface)
+                if (connection.claimInterface(usbInterface, true)) {
+                    claimedInterfaces.add(usbInterface)
                 }
             }
+
+            if (claimedInterfaces.isEmpty()) return false
+
+            for ((index, payload) in payloads.withIndex()) {
+                var writeSuccess = false
+                for (usbInterface in claimedInterfaces) {
+                    if (writeToInterface(connection, usbInterface, payload)) {
+                        writeSuccess = true
+                    }
+                }
+                if (!writeSuccess) return false
+                if (index < payloads.lastIndex) {
+                    Thread.sleep(WRITE_DELAY_MS)
+                }
+            }
+            return true
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return false
         } finally {
+            for (usbInterface in claimedInterfaces) {
+                connection.releaseInterface(usbInterface)
+            }
             connection.close()
         }
-
-        return anySuccess
     }
 
     private fun writeToInterface(
@@ -296,29 +315,23 @@ class MainActivity : AppCompatActivity() {
         return anySuccess
     }
 
-    private fun buildPayload(): ByteArray {
-        val payload = ByteArray(65)
-        val header = byteArrayOf(
-            0x00,
-            0xA5.toByte(),
-            0x5A.toByte(),
-            0x88.toByte(),
-            0x0B.toByte(),
-            0xFF.toByte(),
-            0x00,
-            0x00,
-            0x70.toByte(),
-            0xE5.toByte(),
-            0x03,
-            0x00,
-            0x05,
-            0x00,
-            0x64,
-            0x00,
-            0x16,
+    private fun buildPayloads(): List<ByteArray> {
+        val commands = listOf(
+            // Threshold = -90dB
+            byteArrayOf(0x00, 0xA5.toByte(), 0x5A.toByte(), 0x88.toByte(), 0x03, 0x01, 0xD8.toByte(), 0xDC.toByte(), 0x16),
+            // Ratio = 100
+            byteArrayOf(0x00, 0xA5.toByte(), 0x5A.toByte(), 0x88.toByte(), 0x03, 0x02, 0x64, 0x00, 0x16),
+            // Attack = 0ms
+            byteArrayOf(0x00, 0xA5.toByte(), 0x5A.toByte(), 0x88.toByte(), 0x03, 0x03, 0x00, 0x00, 0x16),
+            // Release = 10ms
+            byteArrayOf(0x00, 0xA5.toByte(), 0x5A.toByte(), 0x88.toByte(), 0x03, 0x04, 0x0A, 0x00, 0x16),
         )
-        System.arraycopy(header, 0, payload, 0, header.size)
-        return payload
+
+        return commands.map { command ->
+            ByteArray(HID_REPORT_SIZE).also { payload ->
+                System.arraycopy(command, 0, payload, 0, command.size)
+            }
+        }
     }
 
     private fun setStatus(status: Status) {
@@ -356,5 +369,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val ACTION_USB_PERMISSION = "com.fosifix.USB_PERMISSION"
+        private const val HID_REPORT_SIZE = 65
+        private const val WRITE_DELAY_MS = 50L
     }
 }
