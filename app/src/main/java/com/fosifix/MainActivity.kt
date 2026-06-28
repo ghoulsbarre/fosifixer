@@ -277,8 +277,7 @@ class MainActivity : AppCompatActivity() {
         if (!anySuccess) {
             try {
                 val result = connection.controlTransfer(
-                    UsbConstants.USB_DIR_OUT or UsbConstants.USB_TYPE_CLASS or
-                        UsbConstants.USB_RECIP_INTERFACE,
+                    UsbConstants.USB_DIR_OUT or UsbConstants.USB_TYPE_CLASS or 0x01,
                     0x09,
                     0x0200,
                     usbInterface.id,
