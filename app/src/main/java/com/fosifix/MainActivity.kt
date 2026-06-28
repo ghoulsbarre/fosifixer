@@ -37,15 +37,17 @@ class MainActivity : AppCompatActivity() {
     private var payloadSentForCurrentConnection = false
     private var connectFlowRunning = false
     private var countdownRunnable: Runnable? = null
+    private val loggedProductIds = mutableSetOf<Int>()
 
     private val usbReceiver = UsbReceiver(
         onAttached = { device ->
+            logDiscoveredPid(device)
             appendLog("Amplifier connected")
             payloadSentForCurrentConnection = false
             handleDeviceFound(device)
         },
-        onDetached = {
-            appendLog("Amplifier disconnected")
+        onDetached = { device ->
+            appendLog("Amplifier disconnected (PID: ${UsbReceiver.formatProductId(device.productId)})")
             cancelCountdown()
             connectFlowRunning = false
             payloadSentForCurrentConnection = false
@@ -112,6 +114,7 @@ class MainActivity : AppCompatActivity() {
         if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
             intent.getParcelableExtraSafe(UsbManager.EXTRA_DEVICE)?.let { device ->
                 if (UsbReceiver.isTargetDevice(device)) {
+                    logDiscoveredPid(device)
                     appendLog("Launched from USB attach")
                     payloadSentForCurrentConnection = false
                     handleDeviceFound(device)
@@ -132,7 +135,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun scanAndHandleDevice() {
-        val device = findTargetDevice()
+        val devices = findTargetDevices()
+        logDiscoveredPids(devices)
+
+        val device = devices.firstOrNull()
         if (device == null) {
             if (!connectFlowRunning) {
                 setStatus(Status.WAITING)
@@ -142,12 +148,26 @@ class MainActivity : AppCompatActivity() {
         handleDeviceFound(device)
     }
 
-    private fun findTargetDevice(): UsbDevice? {
-        return usbManager.deviceList.values.firstOrNull { UsbReceiver.isTargetDevice(it) }
+    private fun findTargetDevices(): List<UsbDevice> {
+        return usbManager.deviceList.values.filter { UsbReceiver.isTargetDevice(it) }
+    }
+
+    private fun logDiscoveredPids(devices: List<UsbDevice>) {
+        for (device in devices) {
+            logDiscoveredPid(device)
+        }
+    }
+
+    private fun logDiscoveredPid(device: UsbDevice) {
+        if (loggedProductIds.add(device.productId)) {
+            appendLog("Found device PID: ${UsbReceiver.formatProductId(device.productId)}")
+        }
     }
 
     private fun handleDeviceFound(device: UsbDevice) {
         if (payloadSentForCurrentConnection || connectFlowRunning) return
+
+        logDiscoveredPid(device)
 
         if (usbManager.hasPermission(device)) {
             startConnectFlow(device)

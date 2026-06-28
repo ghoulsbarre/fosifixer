@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <usb-device vendor-id="34952" product-id="5911" />
+    <usb-device vendor-id="34952" />
 </resources>
